@@ -6,9 +6,6 @@
 #include <time.h>
 #include <stdio.h>
 
-#define GENERATION_SIZE 100
-#define INFINIT 1073741823 // ~ 2^32
-
 // Estrutura que guarda a instância do problema,
 // Sendo que a posição AxBx0 é -1 se não existir aresta entre o vérticeA e o vérticeB
 // E é o custo da aresta caso essa exista, e AxBxC com C > 0 é o quanto aquea aresta consome do recurso C
@@ -17,9 +14,20 @@ int*** graph;
 // Estrutura para guardar os vizinhos de cada vértice, para facilitar na geração de soluções aleatórias
 QList<QList<int>* > neighbors;
 
+int generationSize;
+int mutationRate;
+
 //Lista de soluções
 QList<QList<int> > generation;
 QList<uint> generationFitness;
+
+//Melhor solução atual
+QList<int> bestSolution;
+uint bestSolutionFitness = 0;
+
+//Melhor solução atual
+QList<int> bestRandomSolution;
+uint bestRandomSolutionFitness = 0;
 
 int numberOfVertices;
 int numberOfResources;
@@ -29,6 +37,7 @@ int* resourcesUperLimits;
 int* resourcesLowerLimits;
 int** verticesCosts;
 
+int INFINIT = 0;
 
 
 bool hasLoop(QList<int> beeing)
@@ -142,6 +151,8 @@ uint fitness(QList<int> beeing)
         }
     }
 
+    delete[] res;
+
     return fitness;
 }
 
@@ -198,12 +209,9 @@ QList<int> pathSearch(int verticeA, int verticeTabu, QList<int> beeing)
     }
 }
 
-//Cruza duas soluções e retorna o melhor filho
+//Cruza duas soluções e retorna os dois filhos
 QPair<QList<int> , QList<int> > crossOver(QList<int> beeingA, QList<int> beeingB)
 {
-    printBeeing(beeingA);
-    printBeeing(beeingB);
-
     QPair<QList<int> , QList<int> > toRet;
     int verticeToCrossIndexA = -1;
     int verticeToCrossIndexB = -1;
@@ -273,9 +281,6 @@ QPair<QList<int> , QList<int> > crossOver(QList<int> beeingA, QList<int> beeingB
         toRet.second = beeingB;
     }
 
-    printBeeing(toRet.first);
-    printBeeing(toRet.second);
-
     return toRet;
 }
 
@@ -303,6 +308,370 @@ QList<int> mutate(QList<int> beeing)
     return beeingBegin;
 }
 
+void parser(QString filename)
+{
+    QFile* f = new QFile(filename);
+    if(!f->open(QIODevice::ReadOnly))
+    {
+        qDebug() << "Arquivo inválido";
+        return;
+    }
+    QByteArray buffer = f->readAll();
+    f->close();
+
+    //Inicio do parser
+    QList<QByteArray> everyThing = buffer.split('\n');
+
+    //Primeira Linha
+    QList<QByteArray> firstLine = everyThing.at(0).split(' ');
+
+    numberOfVertices = QString(firstLine.at(1)).toInt();
+    numberOfArrows =  QString(firstLine.at(2)).toInt();
+    numberOfResources =  QString(firstLine.at(3)).toInt();
+
+    //Alocação da matriz de 3 dimensões do grafo
+    graph = new int**[numberOfVertices + 1]; //Uma posição a mais para facilitar o parser
+    for(int i = 0; i < numberOfVertices + 1; i++)
+    {
+        graph[i] = new int*[numberOfVertices + 1]; //Uma posição a mais para facilitar o parser
+        for(int j = 0; j < numberOfVertices + 1; j++)
+        {
+            graph[i][j] = new int[numberOfResources + 1]; //Uma posição a mais e a '0' contém o custo da aresta
+
+            //Inicialização, tudo -1
+            for(int k = 0; k < numberOfResources + 1; k++)
+            {
+                graph[i][j][k] = -1;
+            }
+        }
+    }
+
+    //Segunda linha e terceira linha
+    QList<QByteArray> secoundLine = everyThing.at(1).split(' ');
+    QList<QByteArray> thirdLine = everyThing.at(2).split(' ');
+
+    //Alocação e preenchimento dos limites dos recursos
+    resourcesLowerLimits = new int[numberOfResources];
+    resourcesUperLimits =  new int[numberOfResources];
+
+    for(int i = 0; i < numberOfResources; i++)
+    {
+        resourcesLowerLimits[i] = QString(secoundLine.at(i+1)).toInt();
+        resourcesUperLimits[i] = QString(thirdLine.at(i+1)).toInt();
+    }
+
+    //Linhas de custos dos vértices
+    //Alocação da matriz de custos dos vértices
+    verticesCosts = new int*[numberOfVertices];
+    for(int i = 0; i < numberOfVertices; i++)
+    {
+        verticesCosts[i] = new int[numberOfResources];
+    }
+
+    //Preenchimento da matriz de custos dos vértices
+    for(int i = 0; i < numberOfVertices; i++)
+    {
+        QList<QByteArray> nextLine = everyThing.at(i + 3).split(' ');
+        for(int j = 0; j < numberOfResources; j++)
+        {
+            verticesCosts[i][j] = QString(nextLine.at(j+1)).toInt();
+        }
+    }
+
+    //Inicializa as listas de vizinhos com uma lista vazia para cada vértice, isso facilitará a geração de soluções aleatórias
+    //Esta também tem uma posição a mais para facilitar
+    for(int i = 0; i < numberOfVertices+1; i++)
+    {
+        neighbors.append(new QList<int>());
+    }
+
+    //Linhas das arestas
+    int filePointer = 3 + numberOfVertices - 1; //Auxiliar para percorrer o arquivo
+    for(int i = 0; i < numberOfArrows; i++)
+    {
+        filePointer++;
+
+        QList<QByteArray> nextLine = everyThing.at(filePointer).split(' ');
+
+        int verticeA = QString(nextLine.at(1)).toInt();
+        int verticeB = QString(nextLine.at(2)).toInt();
+        graph[verticeA][verticeB][0] = QString(nextLine.at(3)).toInt(); //Custo da aresta
+
+        //Coloca o verticeB na lista de vizinhos de A
+        neighbors.at(verticeA)->append(verticeB);
+
+        //Consumo de cada recurso na aresta
+        for(int j = 0; j < numberOfResources; j++)
+        {
+            graph[verticeA][verticeB][j+1] = QString(nextLine.at(j+4)).toInt();
+        }
+    }
+}
+
+//Retorna a roleta como parametro e o tamanho da roleta no retorno normal
+int createSelectionRouletteWheel(int** rouletteToRet, QList<uint> generationFit)
+{
+    int fitnessSum = 0;
+    int infinitBeeings = 0;
+
+    //Somatório dos fitness desconsiderando as soluções que receberam INFINIT
+    for(int i = 0; i < generationSize; i++)
+    {
+        if(generationFit.at(i) < INFINIT)
+        {
+            fitnessSum+= generationFit.at(i);
+        }
+        else
+        {
+            infinitBeeings++;
+        }
+    }
+
+    int* roulette = new int[fitnessSum + infinitBeeings*fitnessSum];
+    int offset = 0;
+
+    for(int i = 0; i < generationSize; i++)
+    {
+        //Substitui o INFINIT pelo somatório das soluções
+        int realValue;
+        if(generationFit.at(i) >= INFINIT)
+        {
+            realValue = fitnessSum;
+        }
+        else
+        {
+            realValue = generationFit.at(i);
+        }
+
+        //Adiciona na roleta
+        for(int j = offset; j < offset + realValue; j++)
+        {
+            roulette[j] = i;
+        }
+        offset += realValue;
+    }
+
+    *rouletteToRet = roulette;
+    return fitnessSum + infinitBeeings*fitnessSum;
+}
+
+//Retorna a roleta como parametro e o tamanho da roleta no retorno normal
+int createCrossOverRouletteWheel(int** rouletteToRet, QList<uint> generationFit)
+{
+    int fitnessSum = 0;
+    int infinitBeeings = 0;
+
+    //Somatório dos fitness desconsiderando as soluções que receberam INFINIT
+    for(int i = 0; i < generationSize; i++)
+    {
+        if(generationFit.at(i) < INFINIT)
+        {
+            fitnessSum+= generationFit.at(i);
+        }
+        else
+        {
+            infinitBeeings++;
+        }
+    }
+
+
+    QList<int> reverseFitness;
+    int reverseFitnessSum = 0;
+
+    //Cria uma lista dos fitness invertidos para inverter as probabilidades na hora de girar a roleta
+    //Soluções com Fitness infinito fica com fitness 1
+    for(int i = 0; i < generationSize; i++)
+    {
+        if(generationFit.at(i) < INFINIT)
+        {
+            reverseFitness.append(fitnessSum - generationFit.at(i));
+            reverseFitnessSum += fitnessSum - generationFit.at(i);
+
+        }
+        else
+        {
+            reverseFitness.append(1);
+            reverseFitnessSum++;
+        }
+    }
+
+    int* roulette = new int[reverseFitnessSum];
+    int offset = 0;
+
+    for(int i = 0; i < generationSize; i++)
+    {
+        for(int j = offset; j < offset + reverseFitness.at(i); j++)
+        {
+            roulette[j] = i;
+        }
+        offset += reverseFitness.at(i);
+    }
+
+    *rouletteToRet = roulette;
+    return reverseFitnessSum;
+}
+
+int spinRoulette(int* roulette, int rouletteSize)
+{
+    int sorted = qrand() % rouletteSize;
+
+    int beeingSortedIndex = roulette[sorted];
+
+    return beeingSortedIndex;
+}
+
+int findBestFitness(QList<int> gen)
+{
+    int bestFit = INFINIT;
+    int bestFitIndex = 0;
+
+    for(int i = 0; i < gen.size(); i++)
+    {
+        if(gen.at(i) < bestFit)
+        {
+            bestFit = gen.at(i);
+            bestFitIndex = i;
+        }
+    }
+
+    return bestFitIndex;
+}
+
+void AG()
+{
+    printf("Criando soluções aleatórias...\n");
+
+    //Gera a primeira geração aleatóriamente
+    for(int i = 0; i < generationSize; i++)
+    {
+        QList<int> newRandomSolution = createRandomSolution();
+        generation.append(newRandomSolution);
+
+        uint fit = fitness(newRandomSolution);
+        if(fit < bestRandomSolutionFitness)
+        {
+            bestRandomSolutionFitness = fit;
+            bestRandomSolution = newRandomSolution;
+        }
+    }
+
+    int generationsWithoutImprovement = 0;
+
+    bool haveSex = true;
+
+    while(haveSex)
+    {
+        bool hasImproved = false;
+
+        printf("Calculando fitness da nova geração...\n");
+
+        //Calculate generation fitness
+        for(int i = 0; i < generationSize; i++)
+        {
+            uint fit = fitness(generation.at(i));
+            generationFitness.append(fit);
+
+            if(fit < bestSolutionFitness)
+            {
+                bestSolutionFitness = fit;
+                bestSolution = QList<int>(generation.at(i));
+                hasImproved = true;
+            }
+        }
+
+        //Verifica se houve melhora
+        if(hasImproved)
+        {
+            generationsWithoutImprovement = 0;
+        }
+        else
+        {
+            generationsWithoutImprovement++;
+            if(generationsWithoutImprovement > 1000)
+            {
+                break;
+            }
+        }
+
+
+        printf("Criando nova roleta de cruzamento...\n");
+
+        //Cria a roleta para selecionar quem cruzar
+        int* crossOverRoulette;
+        int crossOverRouletteSize = createCrossOverRouletteWheel(&crossOverRoulette, generationFitness);
+
+        printf("Realizando cruzamentos...\n");
+
+        //Faz os cruzamentos
+        QList<QList<int> > sons;
+        for(int i = 0; i < generationSize / 2; i++)
+        {
+            int toCross1 = spinRoulette(crossOverRoulette, crossOverRouletteSize);
+            int toCross2 = spinRoulette(crossOverRoulette, crossOverRouletteSize);
+
+            QPair<QList<int>,QList<int> > newSons = crossOver(generation.at(toCross1), generation.at(toCross2));
+
+            sons.append(newSons.first);
+            sons.append(newSons.second);
+        }
+
+        printf("Calculando fitness dos filhos...\n");
+
+        //Calcula fitness dos filhos
+        QList<int> sonsFitness;
+        for(int i = 0; i < generationSize; i++)
+        {
+            uint fit = fitness(sons.at(i));
+            sonsFitness.append(fit);
+        }
+
+        printf("Criando roleta para seleção dos que serão excluidos da geração...\n");
+
+        //Cria a roleta para selecionar quem remover da geração
+        int* selectionRoulette;
+        int selectionRouletteSize = createSelectionRouletteWheel(&selectionRoulette, generationFitness);
+
+
+        printf("Selecionando quem sai e quem entra...\n");
+
+        //Substitui 3/4 dos indivíduos da geração por 3/4 dos filhos
+        QList<int> alreadyRemoved;
+        QList<int> toSurvive;
+        for(int i = 0; i < (generationSize * (3/4)); i++)
+        {
+            int toDie = spinRoulette(selectionRoulette, selectionRouletteSize);
+
+            if(!alreadyRemoved.contains(toDie))
+            {
+                generation.removeAt(toDie);
+                alreadyRemoved.append(toDie);
+
+                //Coloca Infinito no filho com melhor valor selecionado para que não seja mais selecionado
+                int surviver = findBestFitness(sonsFitness);
+                sonsFitness.replace(surviver, INFINIT);
+                toSurvive.append(surviver);
+            }
+        }
+
+        printf("Adicionando filhos selecionados a nova geração...\n\n");
+
+        //Adiciona os sobreviventes selecionados na geração
+        for(int i = 0; i < toSurvive.size(); i++)
+        {
+            generation.append(sons.at(toSurvive.at(i)));
+        }
+
+        delete[] crossOverRoulette;
+        delete[] selectionRoulette;
+    }
+
+    printf("\nBest Random Solution: ");printBeeing(bestRandomSolution);
+    printf("Valor: %d\n", bestRandomSolutionFitness);
+
+    printf("Best Solution: ");printBeeing(bestSolution);
+    printf("Valor: %d\n", bestSolutionFitness);
+}
+
 int main(int argc, char *argv[])
 {
     QCoreApplication a(argc, argv);
@@ -310,115 +679,36 @@ int main(int argc, char *argv[])
     //Inicializa o gerador de números randomicos
     qsrand(time(NULL));
 
-    if(argc > 1)
+    if(argc > 3)
     {
-        QFile* f = new QFile(QString(argv[1]));
-        if(!f->open(QIODevice::ReadOnly))
+        //Preenche as estruturas de dados lendo do arquivo
+        parser(QString(argv[1]));
+
+        generationSize = QString(argv[2]).toInt();
+
+        mutationRate = QString(argv[3]).toInt();
+
+        for(int i = 0; i < numberOfVertices; i++)
         {
-            qDebug() << "Arquivo inválido";
-            return a.exec();
-        }
-        QByteArray buffer = f->readAll();
-        f->close();
-
-        //Inicio do parser
-        QList<QByteArray> everyThing = buffer.split('\n');
-
-        //Primeira Linha
-        QList<QByteArray> firstLine = everyThing.at(0).split(' ');
-
-        numberOfVertices = QString(firstLine.at(1)).toInt();
-        numberOfArrows =  QString(firstLine.at(2)).toInt();
-        numberOfResources =  QString(firstLine.at(3)).toInt();
-
-        //Alocação da matriz de 3 dimensões do grafo
-        graph = new int**[numberOfVertices + 1]; //Uma posição a mais para facilitar o parser
-        for(int i = 0; i < numberOfVertices + 1; i++)
-        {
-            graph[i] = new int*[numberOfVertices + 1]; //Uma posição a mais para facilitar o parser
-            for(int j = 0; j < numberOfVertices + 1; j++)
+            for(int j = 0; j < numberOfVertices; j++)
             {
-                graph[i][j] = new int[numberOfResources + 1]; //Uma posição a mais e a '0' contém o custo da aresta
-
-                //Inicialização, tudo -1
-                for(int k = 0; k < numberOfResources + 1; k++)
+                if(graph[i][j][0] > 0)
                 {
-                    graph[i][j][k] = -1;
+                    INFINIT += graph[i][j][0];
                 }
             }
         }
 
-        //Segunda linha e terceira linha
-        QList<QByteArray> secoundLine = everyThing.at(1).split(' ');
-        QList<QByteArray> thirdLine = everyThing.at(2).split(' ');
+        bestSolutionFitness = INFINIT;
+        bestRandomSolutionFitness = INFINIT;
 
-        //Alocação e preenchimento dos limites dos recursos
-        resourcesLowerLimits = new int[numberOfResources];
-        resourcesUperLimits =  new int[numberOfResources];
+        printf("INFINIT %d\n", INFINIT);
 
-        for(int i = 0; i < numberOfResources; i++)
-        {
-            resourcesLowerLimits[i] = QString(secoundLine.at(i+1)).toInt();
-            resourcesUperLimits[i] = QString(thirdLine.at(i+1)).toInt();
-        }
-
-        //Linhas de custos dos vértices
-        //Alocação da matriz de custos dos vértices
-        verticesCosts = new int*[numberOfVertices];
-        for(int i = 0; i < numberOfVertices; i++)
-        {
-            verticesCosts[i] = new int[numberOfResources];
-        }
-
-        //Preenchimento da matriz de custos dos vértices
-        for(int i = 0; i < numberOfVertices; i++)
-        {
-            QList<QByteArray> nextLine = everyThing.at(i + 3).split(' ');
-            for(int j = 0; j < numberOfResources; j++)
-            {
-                verticesCosts[i][j] = QString(nextLine.at(j+1)).toInt();
-            }
-        }        
-
-
-        //Inicializa as listas de vizinhos com uma lista vazia para cada vértice, isso facilitará a geração de soluções aleatórias
-        //Esta também tem uma posição a mais para facilitar
-        for(int i = 0; i < numberOfVertices+1; i++)
-        {
-            neighbors.append(new QList<int>());
-        }
-
-        //Linhas das arestas
-        int filePointer = 3 + numberOfVertices - 1; //Auxiliar para percorrer o arquivo
-        for(int i = 0; i < numberOfArrows; i++)
-        {
-            filePointer++;
-
-            QList<QByteArray> nextLine = everyThing.at(filePointer).split(' ');
-
-            int verticeA = QString(nextLine.at(1)).toInt();
-            int verticeB = QString(nextLine.at(2)).toInt();
-            graph[verticeA][verticeB][0] = QString(nextLine.at(3)).toInt(); //Custo da aresta
-
-            //Coloca o verticeB na lista de vizinhos de A
-            neighbors.at(verticeA)->append(verticeB);
-
-            //Consumo de cada recurso na aresta
-            for(int j = 0; j < numberOfResources; j++)
-            {
-                graph[verticeA][verticeB][j+1] = QString(nextLine.at(j+4)).toInt();
-            }
-        }
-
-        //Gera a primeira geração aleatóriamente
-        for(int i = 0; i < GENERATION_SIZE; i++)
-        {
-            generation.append(createRandomSolution());
-        }
+//        AG();
     }
     else
     {
-        qDebug() << "Modo de uso: \\AGRecursosFinitos <instancia>.txt";
+        qDebug() << "Modo de uso: \\AGRecursosFinitos <instancia>.txt <GenerationSize> <mutationRate> " ;
     }
 
     return a.exec();
