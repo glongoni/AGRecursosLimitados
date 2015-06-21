@@ -29,6 +29,44 @@ int* resourcesUperLimits;
 int* resourcesLowerLimits;
 int** verticesCosts;
 
+
+
+bool hasLoop(QList<int> beeing)
+{
+    int repeat = 0;
+
+    //Compara todos com todos e soma um em repeat a cada repetição
+    foreach(int it, beeing)
+    {
+        foreach(int it2, beeing)
+        {
+            if(it == it2)
+            {
+                repeat++;
+            }
+        }
+    }
+
+    //No final repeat tem que ter exatamente o valor do número de elementos
+    if(repeat != beeing.size())
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
+
+void printBeeing(QList<int> beeing)
+{
+    foreach(int it, beeing)
+    {
+        printf("%d, ", it);
+    }
+    printf("\n\n");
+}
+
 QList<int> createRandomSolution()
 {
     QList<int> toRet;
@@ -74,7 +112,7 @@ uint fitness(QList<int> beeing)
     uint fitness = 0;
 
     //Guarda a quantidade de recursos utilizada pela instancia beeing
-    int res[numberOfResources + 1];
+    int* res = new int[numberOfResources + 1];
 
     //inicialização do uso dos recursos como '0'
     for(int i = 0; i < numberOfResources + 1; i++)
@@ -107,19 +145,162 @@ uint fitness(QList<int> beeing)
     return fitness;
 }
 
-void crossOver(QList<int>* beeingA, QList<int>* beeingB)
+//Retorna uma lista de nodos que vão do vértice A até o restante de beeing após o vérticeTabu
+QList<int> pathSearch(int verticeA, int verticeTabu, QList<int> beeing)
 {
-    QList<int> tabu;
-    int verticeToCross = -1;
+    //Pega a lista de vizinhos de A
+    QList<int>* neighborsOfA = neighbors.at(verticeA);
 
+    //Pega a lista de vértices destino (Tem que alcançar qualquer um deles)
+    QList<int> beeingRest = beeing.mid(beeing.indexOf(verticeTabu)+1);
+
+    QList<int> beeingBegin = beeing.mid(0, beeing.indexOf(verticeA));
+
+    //Procura por qualquer dos vértices destino nos vizinhos de A
+    int nextVerticeIndex;
+    for(nextVerticeIndex = 0; nextVerticeIndex < neighborsOfA->size(); nextVerticeIndex++)
+    {
+        if(beeingRest.contains(neighborsOfA->at(nextVerticeIndex)))
+        {
+            break;
+        }
+    }
+
+    //Encontrou então retorna o nodo destino
+    if(nextVerticeIndex != neighborsOfA->size())
+    {
+        QList<int> toRet;
+        toRet.append(neighborsOfA->at(nextVerticeIndex));
+        return toRet;
+    }
+    else
+    {
+        //Procura um caminho recursivamente até qualquer nodo do beeingRest
+        QList<int> toRet;
+        for(int i = 0; i < neighborsOfA->size(); i++)
+        {
+            //Garante que nenhum nodo que esteja no inicio do beeing seja utilizado (Evitar loops)
+            if(!beeingBegin.contains(neighborsOfA->at(i)))
+            {
+                //Procura um caminho através do vizinho i
+                toRet.append(pathSearch(neighborsOfA->at(i), verticeTabu, beeing));
+            }
+
+            //Se o retorno da recursão for vazio continua para o próximo vértice
+            //Se não é porque encontrou, então adiciona o vértice deste nível no inicio da lista e retorna
+            if(!toRet.isEmpty())
+            {
+                toRet.prepend(neighborsOfA->at(i));
+                break;
+            }
+        }
+        return toRet;
+    }
+}
+
+//Cruza duas soluções e retorna o melhor filho
+QPair<QList<int> , QList<int> > crossOver(QList<int> beeingA, QList<int> beeingB)
+{
+    printBeeing(beeingA);
+    printBeeing(beeingB);
+
+    QPair<QList<int> , QList<int> > toRet;
+    int verticeToCrossIndexA = -1;
+    int verticeToCrossIndexB = -1;
+    int giveUpCross = 0;
+
+    //Procura um vértice em comum para cruzar
     do
     {
-        tabu.append(verticeToCross);
-        int verticeToCross = qrand() % beeingA.size();
+        giveUpCross++;
+        verticeToCrossIndexA = (qrand() % (beeingA.size() - 2)) + 1; // Não pega nem o primeiro e nem o último vértice
+        verticeToCrossIndexB = beeingB.indexOf(beeingA.at(verticeToCrossIndexA));
     }
-    while(!beeingB->contains(beeingA->at(verticeToCross)));
+    while(verticeToCrossIndexB < 0 && giveUpCross < 10);
+
+    //Nao conseguiu achar um vértice em cumum, retorna os pais
+    if(giveUpCross == 10)
+    {
+        toRet.first = beeingA;
+        toRet.second = beeingB;
+        return toRet;
+    }
+
+    QList<int> beeingAcrop1 = beeingA.mid(0,verticeToCrossIndexA);
+    QList<int> beeingBcrop1 = beeingB.mid(0,verticeToCrossIndexB);
+    QList<int> beeingAcrop2 = beeingA.mid(verticeToCrossIndexA);
+    QList<int> beeingBcrop2 = beeingB.mid(verticeToCrossIndexB);
 
 
+    //Verifica loops no primeiro filho
+    bool loop1 = false;
+    foreach(int it, beeingAcrop1)
+    {
+        if(loop1 = beeingBcrop2.contains(it))
+        {
+            break;
+        }
+    }
+
+    //Verifica loops no segundo filho
+    bool loop2 = false;
+    foreach(int it, beeingBcrop1)
+    {
+        if(loop2 = beeingAcrop2.contains(it))
+        {
+            break;
+        }
+    }
+
+    //Se existir loop nos filhos, descarta e retorna o pai
+    if(!loop1)
+    {
+        beeingAcrop1.append(beeingBcrop2);
+        toRet.first = beeingAcrop1;
+    }
+    else
+    {
+        toRet.first = beeingA;
+    }
+
+    if(!loop2)
+    {
+        beeingBcrop1.append(beeingAcrop2);
+        toRet.second = beeingBcrop1;
+    }
+    else
+    {
+        toRet.second = beeingB;
+    }
+
+    printBeeing(toRet.first);
+    printBeeing(toRet.second);
+
+    return toRet;
+}
+
+QList<int> mutate(QList<int> beeing)
+{
+    //Se não é possível mutar retorna o próprio beeing
+    int randomLimit = beeing.size() - 3 + 1;
+    if(randomLimit <= 0)
+    {
+        return beeing;
+    }
+
+    //Seleciona nodo aleatório
+    int verticeToMutateIndex = (qrand() % randomLimit); // Não pega nem o primeiro e nem o último vértice
+
+    QList<int> newPath = pathSearch(beeing.at(verticeToMutateIndex), beeing.at(verticeToMutateIndex+1), beeing);
+
+    QList<int> beeingRest = beeing.mid(beeing.indexOf(newPath.last()) + 1);
+
+    QList<int> beeingBegin = beeing.mid(0, verticeToMutateIndex+1);
+
+    beeingBegin.append(newPath);
+    beeingBegin.append(beeingRest);
+
+    return beeingBegin;
 }
 
 int main(int argc, char *argv[])
@@ -233,11 +414,6 @@ int main(int argc, char *argv[])
         for(int i = 0; i < GENERATION_SIZE; i++)
         {
             generation.append(createRandomSolution());
-        }
-
-        for(int i = 0; i < GENERATION_SIZE; i++)
-        {
-            qDebug() << fitness(generation.at(i));
         }
     }
     else
