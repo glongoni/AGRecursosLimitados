@@ -67,6 +67,15 @@ bool hasLoop(QList<int> beeing)
     }
 }
 
+void printGenerationFitness(QList<uint> beeing)
+{
+    foreach(int it, beeing)
+    {
+        printf("%d, ", it);
+    }
+    printf("\n\n");
+}
+
 void printBeeing(QList<int> beeing)
 {
     foreach(int it, beeing)
@@ -351,13 +360,13 @@ void parser(QString filename)
     QList<QByteArray> thirdLine = everyThing.at(2).split(' ');
 
     //Alocação e preenchimento dos limites dos recursos
-    resourcesLowerLimits = new int[numberOfResources];
-    resourcesUperLimits =  new int[numberOfResources];
+    resourcesLowerLimits = new int[numberOfResources + 1];
+    resourcesUperLimits =  new int[numberOfResources + 1];
 
-    for(int i = 0; i < numberOfResources; i++)
+    for(int i = 1; i < numberOfResources + 1; i++)
     {
-        resourcesLowerLimits[i] = QString(secoundLine.at(i+1)).toInt();
-        resourcesUperLimits[i] = QString(thirdLine.at(i+1)).toInt();
+        resourcesLowerLimits[i] = QString(secoundLine.at(i)).toInt();
+        resourcesUperLimits[i] = QString(thirdLine.at(i)).toInt();
     }
 
     //Linhas de custos dos vértices
@@ -412,36 +421,19 @@ void parser(QString filename)
 int createSelectionRouletteWheel(int** rouletteToRet, QList<uint> generationFit)
 {
     int fitnessSum = 0;
-    int infinitBeeings = 0;
 
-    //Somatório dos fitness desconsiderando as soluções que receberam INFINIT
+    //Somatório dos fitness
     for(int i = 0; i < generationSize; i++)
     {
-        if(generationFit.at(i) < INFINIT)
-        {
-            fitnessSum+= generationFit.at(i);
-        }
-        else
-        {
-            infinitBeeings++;
-        }
+        fitnessSum+= generationFit.at(i);
     }
 
-    int* roulette = new int[fitnessSum + infinitBeeings*fitnessSum];
+    int* roulette = new int[fitnessSum];
     int offset = 0;
 
     for(int i = 0; i < generationSize; i++)
     {
-        //Substitui o INFINIT pelo somatório das soluções
-        int realValue;
-        if(generationFit.at(i) >= INFINIT)
-        {
-            realValue = fitnessSum;
-        }
-        else
-        {
-            realValue = generationFit.at(i);
-        }
+        int realValue = generationFit.at(i);
 
         //Adiciona na roleta
         for(int j = offset; j < offset + realValue; j++)
@@ -452,48 +444,44 @@ int createSelectionRouletteWheel(int** rouletteToRet, QList<uint> generationFit)
     }
 
     *rouletteToRet = roulette;
-    return fitnessSum + infinitBeeings*fitnessSum;
+    return fitnessSum;
 }
 
 //Retorna a roleta como parametro e o tamanho da roleta no retorno normal
 int createCrossOverRouletteWheel(int** rouletteToRet, QList<uint> generationFit)
 {
     int fitnessSum = 0;
-    int infinitBeeings = 0;
 
     //Somatório dos fitness desconsiderando as soluções que receberam INFINIT
     for(int i = 0; i < generationSize; i++)
     {
-        if(generationFit.at(i) < INFINIT)
-        {
-            fitnessSum+= generationFit.at(i);
-        }
-        else
-        {
-            infinitBeeings++;
-        }
+        fitnessSum+= generationFit.at(i);
     }
 
 
     QList<int> reverseFitness;
     int reverseFitnessSum = 0;
+    int lesserRevertFit = INFINIT;
 
     //Cria uma lista dos fitness invertidos para inverter as probabilidades na hora de girar a roleta
-    //Soluções com Fitness infinito fica com fitness 1
     for(int i = 0; i < generationSize; i++)
     {
-        if(generationFit.at(i) < INFINIT)
-        {
-            reverseFitness.append(fitnessSum - generationFit.at(i));
-            reverseFitnessSum += fitnessSum - generationFit.at(i);
+        int reverseFit = fitnessSum - generationFit.at(i);
+        reverseFitness.append(reverseFit);
 
-        }
-        else
+        if(reverseFit < lesserRevertFit)
         {
-            reverseFitness.append(1);
-            reverseFitnessSum++;
+            lesserRevertFit = reverseFit;
         }
     }
+
+    //Normaliza os elementos de acordo com o menor fitReverso para não estourar a memória
+    for(int i = 0; i < generationSize; i++)
+    {
+        reverseFitness.replace(i, reverseFitness.at(i)/lesserRevertFit);
+        reverseFitnessSum += reverseFitness.at(i);
+    }
+
 
     int* roulette = new int[reverseFitnessSum];
     int offset = 0;
@@ -541,6 +529,7 @@ void AG()
 {
     printf("Criando soluções aleatórias...\n");
 
+
     //Gera a primeira geração aleatóriamente
     for(int i = 0; i < generationSize; i++)
     {
@@ -551,7 +540,7 @@ void AG()
         if(fit < bestRandomSolutionFitness)
         {
             bestRandomSolutionFitness = fit;
-            bestRandomSolution = newRandomSolution;
+            bestRandomSolution = QList<int>(newRandomSolution);
         }
     }
 
@@ -587,7 +576,7 @@ void AG()
         else
         {
             generationsWithoutImprovement++;
-            if(generationsWithoutImprovement > 1000)
+            if(generationsWithoutImprovement > 100)
             {
                 break;
             }
@@ -648,7 +637,7 @@ void AG()
 
                 //Coloca Infinito no filho com melhor valor selecionado para que não seja mais selecionado
                 int surviver = findBestFitness(sonsFitness);
-                sonsFitness.replace(surviver, INFINIT);
+                sonsFitness.replace(surviver, INFINIT*INFINIT);
                 toSurvive.append(surviver);
             }
         }
@@ -699,12 +688,12 @@ int main(int argc, char *argv[])
             }
         }
 
-        bestSolutionFitness = INFINIT;
-        bestRandomSolutionFitness = INFINIT;
+        bestSolutionFitness = INFINIT * numberOfResources;
+        bestRandomSolutionFitness = INFINIT * numberOfResources;
 
         printf("INFINIT %d\n", INFINIT);
 
-//        AG();
+        AG();
     }
     else
     {
