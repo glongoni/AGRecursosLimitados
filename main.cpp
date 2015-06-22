@@ -166,13 +166,20 @@ uint fitness(QList<int> beeing)
 }
 
 //Retorna uma lista de nodos que vão do vértice A até o restante de beeing após o vérticeTabu
-QList<int> pathSearch(int verticeA, int verticeTabu, QList<int> beeing)
+QList<int> pathSearch(int verticeA, int verticeTabu, QList<int> beeing, int recursionLimit)
 {
+    if(recursionLimit == 0)
+    {
+        return QList<int>();
+    }
+
     //Pega a lista de vizinhos de A
     QList<int>* neighborsOfA = neighbors.at(verticeA);
 
     //Pega a lista de vértices destino (Tem que alcançar qualquer um deles)
-    QList<int> beeingRest = beeing.mid(beeing.indexOf(verticeTabu)+1);
+    int beginOfRestIndex = beeing.indexOf(verticeTabu)+1;
+
+    QList<int> beeingRest = beeing.mid(beginOfRestIndex);
 
     QList<int> beeingBegin = beeing.mid(0, beeing.indexOf(verticeA));
 
@@ -197,20 +204,24 @@ QList<int> pathSearch(int verticeA, int verticeTabu, QList<int> beeing)
     {
         //Procura um caminho recursivamente até qualquer nodo do beeingRest
         QList<int> toRet;
+        QList<int> alreadyVisited;
         for(int i = 0; i < neighborsOfA->size(); i++)
         {
+            int whereIGo = qrand() % (neighborsOfA->size() - 1);
+
             //Garante que nenhum nodo que esteja no inicio do beeing seja utilizado (Evitar loops)
-            if(!beeingBegin.contains(neighborsOfA->at(i)))
+            if(!beeingBegin.contains(neighborsOfA->at(whereIGo)) && !alreadyVisited.contains(whereIGo))
             {
                 //Procura um caminho através do vizinho i
-                toRet.append(pathSearch(neighborsOfA->at(i), verticeTabu, beeing));
+                toRet.append(pathSearch(neighborsOfA->at(whereIGo), verticeTabu, beeing, recursionLimit - 1));
+                alreadyVisited.append(whereIGo);
             }
 
             //Se o retorno da recursão for vazio continua para o próximo vértice
             //Se não é porque encontrou, então adiciona o vértice deste nível no inicio da lista e retorna
             if(!toRet.isEmpty())
             {
-                toRet.prepend(neighborsOfA->at(i));
+                toRet.prepend(neighborsOfA->at(whereIGo));
                 break;
             }
         }
@@ -231,15 +242,20 @@ QPair<QList<int> , QList<int> > crossOver(QList<int> beeingA, QList<int> beeingB
     {
         giveUpCross++;
         verticeToCrossIndexA = (qrand() % (beeingA.size() - 2)) + 1; // Não pega nem o primeiro e nem o último vértice
+        if(verticeToCrossIndexA <= 0)
+        {
+            continue;
+        }
+
         verticeToCrossIndexB = beeingB.indexOf(beeingA.at(verticeToCrossIndexA));
     }
-    while(verticeToCrossIndexB < 0 && giveUpCross < 10);
+    while(verticeToCrossIndexB < 0 && giveUpCross < numberOfVertices);
 
     //Nao conseguiu achar um vértice em cumum, retorna os pais
-    if(giveUpCross == 10)
+    if(giveUpCross == numberOfVertices)
     {
-        toRet.first = beeingA;
-        toRet.second = beeingB;
+        toRet.first = createRandomSolution();
+        toRet.second = createRandomSolution();
         return toRet;
     }
 
@@ -277,7 +293,7 @@ QPair<QList<int> , QList<int> > crossOver(QList<int> beeingA, QList<int> beeingB
     }
     else
     {
-        toRet.first = beeingA;
+        toRet.first = createRandomSolution();
     }
 
     if(!loop2)
@@ -287,7 +303,7 @@ QPair<QList<int> , QList<int> > crossOver(QList<int> beeingA, QList<int> beeingB
     }
     else
     {
-        toRet.second = beeingB;
+        toRet.second = createRandomSolution();
     }
 
     return toRet;
@@ -296,16 +312,21 @@ QPair<QList<int> , QList<int> > crossOver(QList<int> beeingA, QList<int> beeingB
 QList<int> mutate(QList<int> beeing)
 {
     //Se não é possível mutar retorna o próprio beeing
-    int randomLimit = beeing.size() - 3 + 1;
+    int randomLimit = beeing.size() - 3;
     if(randomLimit <= 0)
     {
         return beeing;
     }
 
     //Seleciona nodo aleatório
-    int verticeToMutateIndex = (qrand() % randomLimit); // Não pega nem o primeiro e nem o último vértice
+    int verticeToMutateIndex = (qrand() % randomLimit) + 1; // Não pega nem o primeiro e nem o último vértice
 
-    QList<int> newPath = pathSearch(beeing.at(verticeToMutateIndex), beeing.at(verticeToMutateIndex+1), beeing);
+    QList<int> newPath = pathSearch(beeing.at(verticeToMutateIndex), beeing.at(verticeToMutateIndex+1), beeing, 20);
+
+    if(newPath.isEmpty())
+    {
+        return beeing;
+    }
 
     QList<int> beeingRest = beeing.mid(beeing.indexOf(newPath.last()) + 1);
 
@@ -420,20 +441,33 @@ void parser(QString filename)
 //Retorna a roleta como parametro e o tamanho da roleta no retorno normal
 int createSelectionRouletteWheel(int** rouletteToRet, QList<uint> generationFit)
 {
-    int fitnessSum = 0;
+    int lesserFit = INFINIT*INFINIT;
+    int normalizedFitSum = 0;
 
-    //Somatório dos fitness
+    //Encontra o menor fitness
     for(int i = 0; i < generationSize; i++)
     {
-        fitnessSum+= generationFit.at(i);
+        if(generationFit.at(i) < lesserFit)
+        {
+            lesserFit = generationFit.at(i);
+        }
     }
 
-    int* roulette = new int[fitnessSum];
+    QList<uint> normalizedFit;
+
+    for(int i = 0; i < generationSize; i++)
+    {
+        normalizedFit.append(generationFit.at(i) / lesserFit);
+        normalizedFitSum += generationFit.at(i) / lesserFit;
+    }
+
+    printf("normalizedFitSum %d\n", normalizedFitSum);
+    int* roulette = new int[normalizedFitSum];
     int offset = 0;
 
     for(int i = 0; i < generationSize; i++)
     {
-        int realValue = generationFit.at(i);
+        int realValue = normalizedFit.at(i);
 
         //Adiciona na roleta
         for(int j = offset; j < offset + realValue; j++)
@@ -444,7 +478,7 @@ int createSelectionRouletteWheel(int** rouletteToRet, QList<uint> generationFit)
     }
 
     *rouletteToRet = roulette;
-    return fitnessSum;
+    return normalizedFitSum;
 }
 
 //Retorna a roleta como parametro e o tamanho da roleta no retorno normal
@@ -482,7 +516,7 @@ int createCrossOverRouletteWheel(int** rouletteToRet, QList<uint> generationFit)
         reverseFitnessSum += reverseFitness.at(i);
     }
 
-
+    printf("reverseNormalizedFitSum %d\n", reverseFitnessSum);
     int* roulette = new int[reverseFitnessSum];
     int offset = 0;
 
@@ -568,6 +602,8 @@ void AG()
             }
         }
 
+//        printGenerationFitness(generationFitness);
+
         //Verifica se houve melhora
         if(hasImproved)
         {
@@ -576,7 +612,7 @@ void AG()
         else
         {
             generationsWithoutImprovement++;
-            if(generationsWithoutImprovement > 100)
+            if(generationsWithoutImprovement > 1000)
             {
                 break;
             }
@@ -620,13 +656,15 @@ void AG()
         int* selectionRoulette;
         int selectionRouletteSize = createSelectionRouletteWheel(&selectionRoulette, generationFitness);
 
-
         printf("Selecionando quem sai e quem entra...\n");
 
         //Substitui 3/4 dos indivíduos da geração por 3/4 dos filhos
         QList<int> alreadyRemoved;
         QList<int> toSurvive;
-        for(int i = 0; i < (generationSize * (3/4)); i++)
+
+        int HowManyWillSurvive = generationSize * 0.75;
+
+        for(int i = 0; i < HowManyWillSurvive; i++)
         {
             int toDie = spinRoulette(selectionRoulette, selectionRouletteSize);
 
@@ -636,23 +674,37 @@ void AG()
                 alreadyRemoved.append(toDie);
 
                 //Coloca Infinito no filho com melhor valor selecionado para que não seja mais selecionado
-                int surviver = findBestFitness(sonsFitness);
-                sonsFitness.replace(surviver, INFINIT*INFINIT);
-                toSurvive.append(surviver);
+                int survivor = findBestFitness(sonsFitness);
+                sonsFitness.replace(survivor, INFINIT*numberOfResources);
+                toSurvive.append(survivor);
+
             }
         }
 
         printf("Adicionando filhos selecionados a nova geração...\n\n");
 
+
         //Adiciona os sobreviventes selecionados na geração
         for(int i = 0; i < toSurvive.size(); i++)
         {
+            int mutationDice = qrand() % 100;
+            if(mutationDice < mutationRate && i > 0)
+            {
+                QList<int> toMutate = sons.at(toSurvive.at(i));
+                QList<int> mutant = mutate(toMutate);
+                sons.replace(toSurvive.at(i), mutant);
+            }
+
             generation.append(sons.at(toSurvive.at(i)));
         }
+
+        generationFitness.clear();
 
         delete[] crossOverRoulette;
         delete[] selectionRoulette;
     }
+
+    printGenerationFitness(generationFitness);
 
     printf("\nBest Random Solution: ");printBeeing(bestRandomSolution);
     printf("Valor: %d\n", bestRandomSolutionFitness);
